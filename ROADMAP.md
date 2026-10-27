@@ -6,11 +6,12 @@ A project directory is added when that project starts. Milestones ship as pull r
 
 ## 1. Async Task Processing System
 
-- **Problem.** Work arrives faster than it can be handled inline. Callers need a durable hand-off, and workers need a safe way to retry failed work.
-- **Deliverable.** A Python producer and worker that accept tasks, process them off the request path, retry failures, and later persist tasks.
-- **Competencies.** Queues, concurrency, retries, idempotency, durability, backpressure.
-- **Milestones.** v0.1 single producer and worker → v0.2 multiple workers → v0.3 failure handling and retries → v0.4 persistent task storage → v0.5 RabbitMQ → v0.6 observability. Detail lives in `projects/01-async-task-processor/README.md`.
-- **Interview relevance.** Explain why work is queued, what happens when a worker dies mid-task, and how you avoid processing the same task twice.
+- **Problem.** The initial implementation demonstrates asynchronous task processing using an in-memory queue. Because queued tasks can be lost when the process exits, later milestones introduce persistent task storage, recovery mechanisms, and stronger delivery guarantees.
+- **Deliverable.** A Python producer and worker that accept tasks and process them off the request path. Planned, not built: v0.1 is an in-memory queue with no durability guarantee. Multiple workers, failure handling and retries, persistent task storage, RabbitMQ, and observability come in later milestones.
+- **Competencies.** Queues, concurrency, retries, idempotency, durability (from v0.4), backpressure. RabbitMQ appears only as an integration at v0.5.
+- **Milestones.** v0.1 single producer and worker, in-memory queue, no durability across process exit → v0.2 multiple workers → v0.3 failure handling and retries → v0.4 persistent task storage → v0.5 RabbitMQ integration → v0.6 observability. Detail lives in `projects/01-async-task-processor/README.md`. None of these are implemented.
+- **v0.5 scope.** Planned integration into the application from earlier milestones, not a broker study. Replace the in-memory queue with a broker-backed queue, connect that producer and worker to RabbitMQ, compare the two architectures, and identify differences in durability, process boundaries, and operational complexity. Routing, acknowledgments, prefetch, dead letters, and broker failure stay in Project 04.
+- **Interview relevance.** Explain why work is queued, what v0.1 loses when the process exits, what a worker crash mid-task implies before and after retries exist, and how the v0.5 broker changes durability and process boundaries compared with the in-memory queue.
 
 ## 2. Nginx and API Gateway
 
@@ -30,11 +31,12 @@ A project directory is added when that project starts. Milestones ship as pull r
 
 ## 4. RabbitMQ Messaging
 
-- **Problem.** In-memory queues disappear on process exit, and producers and consumers need an independent broker with explicit delivery guarantees.
-- **Deliverable.** A producer and consumer using RabbitMQ, with acknowledgments, durable queues, and a retry path for failed messages.
-- **Competencies.** Acknowledgments, prefetch, durable messaging, dead-letter or retry strategy, at-least-once delivery.
-- **Interview relevance.** Explain ack versus nack, what duplicate delivery looks like, and how a consumer crash is recovered.
-- **Milestones.** Publish and consume one queue → manual ack → durable queue and persistent messages → retry or dead-letter on failure → note the difference from the in-memory queue in project 1.
+- **Problem.** Project 01 v0.5 only replaces the in-memory queue with RabbitMQ inside the task processor. Exchanges, acknowledgments, prefetch, dead-letter queues, and broker failure are outside that milestone.
+- **Relationship to Project 01.** This project builds on that introductory integration rather than repeating it. It is a deeper, standalone study of message-broker architecture.
+- **Deliverable.** A small producer and consumer used to exercise routing, acknowledgments, durable messaging, retries or dead letters, and recovery. Planned work, not an existing lab.
+- **Competencies.** Exchanges, queues, bindings, and routing; message acknowledgments and negative acknowledgments; consumer prefetch; persistent messages and durable queues; at-least-once delivery and duplicate processing; retry strategies and dead-letter queues; consumer crashes and recovery; broker failure scenarios; operational monitoring and troubleshooting.
+- **Milestones.** Exchange, queue, and binding → manual ack and nack → prefetch → persistent messages and durable queues → duplicate delivery under at-least-once → retry or dead-letter → consumer crash and recovery → broker failure → one monitoring or troubleshooting check.
+- **Interview relevance.** Explain ack versus nack, what duplicate delivery looks like, how a consumer crash is recovered, and what you check when the broker is down.
 
 ## 5. Authentication and Authorization
 

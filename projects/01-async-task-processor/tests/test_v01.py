@@ -431,9 +431,30 @@ class ConcurrencyTests(ProcessorTestCase):
         self.assertEqual(set(processor.completed_task_ids()), set(accepted))
         self.assert_stopped(processor)
 
+    def _count_shutdown_work(self, processor: Processor) -> dict[str, int]:
+        counts = {"coordinators": 0, "sentinels": 0}
+        count_lock = threading.Lock()
+        original_drive = processor._drive_shutdown
+        original_signal = processor._worker.signal_stop
+
+        def drive(deadline: float) -> bool:
+            with count_lock:
+                counts["coordinators"] += 1
+            return original_drive(deadline)
+
+        def signal_stop() -> None:
+            with count_lock:
+                counts["sentinels"] += 1
+            original_signal()
+
+        processor._drive_shutdown = drive
+        processor._worker.signal_stop = signal_stop
+        return counts
+
     def test_repeated_shutdown_requests_stop_the_worker_once(self) -> None:
         processor = self.start()
-        processor.submit("only")
+        task_id = processor.submit("only")
+        counts = self._count_shutdown_work(processor)
         barrier = threading.Barrier(2)
         results: list[bool] = []
         result_lock = threading.Lock()
@@ -444,17 +465,119 @@ class ConcurrencyTests(ProcessorTestCase):
             with result_lock:
                 results.append(ok)
 
-        threads = [threading.Thread(target=request_shutdown) for _ in range(2)]
+        threads = [
+            threading.Thread(target=request_shutdown, daemon=True) for _ in range(2)
+        ]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join(WAIT)
             self.assertFalse(thread.is_alive())
-        self.assertEqual(results, [True, True])
+        self.assertEqual(sorted(results), [True, True])
+        self.assertEqual(counts["coordinators"], 1)
+        self.assertEqual(counts["sentinels"], 1)
+        self.assertEqual(processor.completed_task_ids(), (task_id,))
         self.assertTrue(processor.shutdown(timeout=WAIT))
-        self.assertEqual(len(processor.completed_task_ids()), 1)
+        self.assertEqual(counts["coordinators"], 1)
+        self.assertEqual(counts["sentinels"], 1)
         self.assert_stopped(processor)
         self.assertTrue(processor.queue.empty())
+
+    def test_shutdown_waiter_times_out_while_coordinator_continues(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+        self.addCleanup(release.set)
+
+        def gate(_seconds: float) -> None:
+            started.set()
+            self.assertTrue(release.wait(WAIT))
+
+        self.patch_sleep(gate)
+        processor = self.start(0.2)
+        task_id = processor.submit("accepted")
+        self.assertTrue(started.wait(WAIT))
+        counts = self._count_shutdown_work(processor)
+        coordinator_done = threading.Event()
+        outcome: dict[str, bool | Exception] = {}
+
+        def coordinate() -> None:
+            try:
+                outcome["ok"] = processor.shutdown(timeout=WAIT)
+            except Exception as exc:
+                outcome["error"] = exc
+            finally:
+                coordinator_done.set()
+
+        coordinator = threading.Thread(target=coordinate, daemon=True)
+        coordinator.start()
+        self.assertTrue(
+            wait_until(lambda: processor.state is ApplicationState.STOPPING)
+        )
+        with self.assertRaises(SubmissionRejected):
+            processor.submit("after-stopping")
+        timed_out_at = time.monotonic()
+        waiter_ok = processor.shutdown(timeout=0.05)
+        waiter_elapsed = time.monotonic() - timed_out_at
+        self.assertFalse(waiter_ok)
+        self.assertLess(waiter_elapsed, 0.5)
+        self.assertFalse(coordinator_done.is_set())
+        self.assertIs(processor.state, ApplicationState.STOPPING)
+        self.assertEqual(processor.completed_task_ids(), ())
+        release.set()
+        self.assertTrue(coordinator_done.wait(WAIT))
+        self.assertNotIn("error", outcome)
+        self.assertIs(outcome.get("ok"), True)
+        self.assertEqual(processor.completed_task_ids(), (task_id,))
+        self.assertEqual(counts["coordinators"], 1)
+        self.assertEqual(counts["sentinels"], 1)
+        self.assertTrue(processor.shutdown(timeout=WAIT))
+        self.assertEqual(counts["coordinators"], 1)
+        self.assertEqual(counts["sentinels"], 1)
+        self.assert_stopped(processor)
+        self.assertTrue(processor.queue.empty())
+
+    def test_later_shutdown_resumes_after_an_incomplete_attempt(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+        self.addCleanup(release.set)
+
+        def gate(_seconds: float) -> None:
+            started.set()
+            self.assertTrue(release.wait(WAIT))
+
+        self.patch_sleep(gate)
+        processor = self.start(0.2)
+        task_id = processor.submit("accepted")
+        self.assertTrue(started.wait(WAIT))
+        counts = self._count_shutdown_work(processor)
+        active = {"current": 0, "max": 0}
+        active_lock = threading.Lock()
+        original_drive = processor._drive_shutdown
+
+        def drive(deadline: float) -> bool:
+            with active_lock:
+                active["current"] += 1
+                active["max"] = max(active["max"], active["current"])
+            try:
+                return original_drive(deadline)
+            finally:
+                with active_lock:
+                    active["current"] -= 1
+
+        processor._drive_shutdown = drive
+        self.assertFalse(processor.shutdown(timeout=0.05))
+        self.assertIs(processor.state, ApplicationState.STOPPING)
+        self.assertTrue(processor.worker_is_running())
+        release.set()
+        self.assertTrue(processor.shutdown(timeout=WAIT))
+        self.assertEqual(processor.completed_task_ids(), (task_id,))
+        self.assertEqual(active["max"], 1)
+        self.assertEqual(counts["coordinators"], 2)
+        self.assertEqual(counts["sentinels"], 1)
+        self.assertTrue(processor.shutdown(timeout=WAIT))
+        self.assertEqual(counts["coordinators"], 2)
+        self.assertEqual(counts["sentinels"], 1)
+        self.assert_stopped(processor)
 
 
 class FailureTests(ProcessorTestCase):

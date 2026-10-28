@@ -28,8 +28,8 @@ Local commands are recorded here. A merged pull request is still required before
 | Item | Evidence |
 | --- | --- |
 | Commands executed | `python3 -m unittest discover -s projects/01-async-task-processor/tests -v` and `python3 projects/01-async-task-processor/labs/v0.1/lab06_automated_tests.py` |
-| Actual terminal output | Local run on this workspace: `Ran 20 tests in 0.669s`, then `OK`. Lab 06 printed `tests_run: 20`, `failures: 0`, `errors: 0`, and `Result: PASS`. Elapsed time varies. |
-| Tests performed | 20 unittest methods in `tests/test_v01.py`. This is a local run, not a merged-milestone record. |
+| Actual terminal output | Local run on this workspace: `Ran 22 tests in 0.773s`, then `OK`. Lab 06 printed `tests_run: 22`, `failures: 0`, `errors: 0`, and `Result: PASS`. Elapsed time varies. |
+| Tests performed | 22 unittest methods in `tests/test_v01.py`. This is a local run, not a merged-milestone record. |
 | GitHub PR references | None. No milestone PR is open or merged. |
 
 ## 4. Failure investigation
@@ -43,7 +43,7 @@ Local commands are recorded here. A merged pull request is still required before
 | Actual observed behavior | The local unittest run reported `RuntimeError: processing failed` on stderr and the test ended `ok`. |
 | Root cause | The worker records the exception, calls `task_done()` for the failed item, and exits. Remaining items stay unfinished. |
 | Recovery steps | None in v0.1. The failed task is not retried. |
-| Verification results | Covered by the 20-test local run. Not yet reviewed through a merged pull request. |
+| Verification results | Covered by the 22-test local run. Not yet reviewed through a merged pull request. |
 
 ## 5. Architecture decisions
 
@@ -53,7 +53,7 @@ Record a decision when a milestone forces a choice. The notes below are the plan
 | --- | --- |
 | Problem or requirement | Accept a task and process it off the caller's path with one producer and one worker. |
 | Available design options | The local code uses an in-memory `queue.Queue`. Persistent storage and RabbitMQ remain later milestones (v0.4, v0.5). |
-| Selected approach | In code, not yet reviewed through a merged PR: one producer, one worker thread, `uuid.uuid4()` ids, lifecycle logs, and a shared lock with states `ACCEPTING`, `STOPPING`, and `STOPPED`. |
+| Selected approach | In code, not yet reviewed through a merged PR: one producer, one worker thread, `uuid.uuid4()` ids, lifecycle logs, and a shared lock with states `ACCEPTING`, `STOPPING`, and `STOPPED`. Concurrent `shutdown` calls share one coordinator. |
 | Trade-offs and limitations | An in-memory queue does not survive process exit. v0.1 has no durability guarantee. A worker exception is reported and is not retried. Retries are v0.3. Persistence is v0.4. |
 
 ## 6. Interview preparation
@@ -314,12 +314,13 @@ submit holds the same lock as shutdown
 
 shutdown
   1. lock: ACCEPTING -> STOPPING
-  2. unlock
-  3. queue.join() with a timeout     # accepted tasks finish; lock is not held
-  4. put one sentinel on the queue
-  5. worker sees the sentinel, calls task_done() once, and returns
-  6. join the worker thread
-  7. lock: STOPPING -> STOPPED
+  2. unlock; one caller becomes the coordinator
+  3. other callers wait on that attempt until it finishes or their own deadline expires
+  4. queue join with the time left on that caller's deadline
+  5. put one sentinel on the queue
+  6. worker sees the sentinel, calls task_done() once, and returns
+  7. join the worker thread with the time still left
+  8. lock: STOPPING -> STOPPED only after that attempt succeeds
 ```
 
 **Command.**
@@ -368,7 +369,7 @@ Result: PASS
 
 **Knowledge-check question.** Why does shutdown release the coordination lock before it waits for the queue to drain?
 
-**Limitations or failure scenarios.** This is one worker and an in-memory queue. A task accepted before `STOPPING` can still be lost if the process crashes. There are no retries. `task_done()` means the queue has accounted for that item, including the sentinel; it does not mean processing succeeded. If the worker raises while other tasks are still queued, that failed item is accounted for, `COMPLETED` is not logged, the traceback is printed on stderr, and the thread exits. The remaining tasks stay unfinished, so `queue.join()` would wait forever. `shutdown` waits only up to its timeout, leaves the state at `STOPPING`, and returns failure. The lab's waits are bounded, and the worker thread is a daemon, so a failed run still exits. Multiple workers, persistence, and RabbitMQ are later milestones.
+**Limitations or failure scenarios.** This is one worker and an in-memory queue. A task accepted before `STOPPING` can still be lost if the process crashes. There are no retries. `task_done()` means the queue has accounted for that item, including the sentinel; it does not mean processing succeeded. If the worker raises while other tasks are still queued, that failed item is accounted for, `COMPLETED` is not logged, the traceback is printed on stderr, and the thread exits. The remaining tasks stay unfinished. `shutdown` waits only until that caller's deadline, leaves the state at `STOPPING`, and returns failure. A later call can continue the unfinished shutdown, but it does not retry the failed task or finish work the worker has already abandoned. That limitation is still present. Concurrent callers do not each run a separate shutdown: one coordinates, and the others wait. The lab's waits are bounded, and the worker thread is a daemon, so a failed run still exits. Multiple workers, persistence, and RabbitMQ are later milestones.
 
 ### Lab 06 — Automated tests
 
@@ -401,10 +402,10 @@ python3 projects/01-async-task-processor/labs/v0.1/lab06_automated_tests.py
 **Expected output.** Every test line ends in `ok`. During `test_worker_failure_is_not_treated_as_success`, stderr prints a `RuntimeError: processing failed` traceback from the worker thread, and that test still ends in `ok`. The elapsed time changes. The stable ending is:
 
 ```text
-Ran 20 tests in 0.669s
+Ran 22 tests in 0.773s
 
 OK
-tests_run: 20
+tests_run: 22
 failures: 0
 errors: 0
 Result: PASS
@@ -412,7 +413,7 @@ Result: PASS
 
 The exit status is 0. A failing test prints `Result: FAIL` and the script exits 1.
 
-**What to observe.** Twenty tests run from `tests/test_v01.py`. The worker-failure traceback is the reported error, not a hidden success. `Result: PASS` appears only after `OK`.
+**What to observe.** Twenty-two tests run from `tests/test_v01.py`. The worker-failure traceback is the reported error, not a hidden success. `Result: PASS` appears only after `OK`.
 
 **Knowledge-check question.** The suite passes, and then the process is killed while a task is still queued. Which of those outcomes does this lab prove, and which one is still lost?
 

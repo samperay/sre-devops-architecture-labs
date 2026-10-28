@@ -17,7 +17,7 @@ Producer → queue.Queue → one worker thread
 - **Producer** accepts a payload, assigns a `uuid.uuid4()` id, and places a frozen `Task` on the queue.
 - **In-memory queue** holds accepted tasks until the worker retrieves them. It lives in the process and is empty after a restart.
 - **Worker** is one background thread. It sleeps for a configured delay and logs `SUBMITTED`, `STARTED`, and `COMPLETED`.
-- **Shutdown** shares one lock with submission. After the state changes to `STOPPING`, new submissions are rejected. Tasks already accepted are finished, then a sentinel stops the worker and the state becomes `STOPPED`.
+- **Shutdown** shares one lock with submission. The change from `ACCEPTING` to `STOPPING` happens under that lock, and new submissions are rejected after it. One caller coordinates the rest of shutdown. Other callers wait for that attempt, using one monotonic deadline for their own timeout. The coordinator does not hold the submission lock while accepted tasks finish. It then places one sentinel for the worker and moves the state to `STOPPED`. A timed-out attempt stays at `STOPPING`; a later call continues that same shutdown instead of starting a second one. A worker exception still leaves the processor in `STOPPING` with unfinished tasks. That failure is not retried.
 
 Retries, disk, RabbitMQ, and metrics are later milestones.
 

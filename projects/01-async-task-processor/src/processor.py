@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import enum
 import threading
+import time
 from queue import Queue
 
 from producer import Producer
@@ -14,21 +15,33 @@ class ApplicationState(enum.Enum):
     STOPPED = "STOPPED"
 
 
+def _remaining(deadline: float) -> float:
+    return deadline - time.monotonic()
+
+
 def _wait_until_idle(task_queue: Queue, timeout: float) -> bool:
-    finished = threading.Event()
-
-    def _join() -> None:
-        task_queue.join()
-        finished.set()
-
-    threading.Thread(target=_join, name="queue-join", daemon=True).start()
-    return finished.wait(timeout)
+    if timeout < 0:
+        timeout = 0.0
+    with task_queue.all_tasks_done:
+        if task_queue.unfinished_tasks == 0:
+            return True
+        if timeout == 0:
+            return False
+        deadline = time.monotonic() + timeout
+        while task_queue.unfinished_tasks:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            task_queue.all_tasks_done.wait(remaining)
+        return True
 
 
 class Processor:
     def __init__(self, delay: float) -> None:
         self._queue: Queue = Queue()
         self._lock = threading.Lock()
+        self._shutdown_waiting = threading.Condition(self._lock)
+        self._shutdown_active = False
         self._state = ApplicationState.ACCEPTING
         self._producer = Producer(
             self._queue,
@@ -55,26 +68,51 @@ class Processor:
     def shutdown(self, timeout: float = 5.0) -> bool:
         if timeout < 0:
             raise ValueError("timeout must be non-negative")
+        deadline = time.monotonic() + timeout
         with self._lock:
             if self._state is ApplicationState.STOPPED:
                 return True
+            if self._shutdown_active:
+                return self._wait_for_shutdown(deadline)
+            self._shutdown_active = True
             if self._state is ApplicationState.ACCEPTING:
                 self._state = ApplicationState.STOPPING
-        # Release the lock before draining so a new submit can be rejected
-        # and the worker can finish tasks it already accepted.
-        if not _wait_until_idle(self._queue, timeout):
+        return self._coordinate_shutdown(deadline)
+
+    def _wait_for_shutdown(self, deadline: float) -> bool:
+        while self._shutdown_active:
+            remaining = _remaining(deadline)
+            if remaining <= 0:
+                return False
+            self._shutdown_waiting.wait(remaining)
+        return self._state is ApplicationState.STOPPED
+
+    def _coordinate_shutdown(self, deadline: float) -> bool:
+        completed = False
+        try:
+            completed = self._drive_shutdown(deadline)
+        finally:
+            with self._lock:
+                if completed:
+                    self._state = ApplicationState.STOPPED
+                self._shutdown_active = False
+                self._shutdown_waiting.notify_all()
+        return completed
+
+    def _drive_shutdown(self, deadline: float) -> bool:
+        # The submission lock is not held here. Accepted tasks can finish,
+        # and a new submit can observe STOPPING and be rejected.
+        if not _wait_until_idle(self._queue, max(0.0, _remaining(deadline))):
             return False
         # task_done() only means the queue was updated. A worker error is not
         # a clean shutdown, even when the failed item was already accounted for.
         if self._worker.error is not None:
             return False
-        self._worker.signal_stop()
-        self._worker.join(timeout=timeout)
-        if self._worker.is_running():
+        if _remaining(deadline) <= 0:
             return False
-        with self._lock:
-            self._state = ApplicationState.STOPPED
-        return True
+        self._worker.signal_stop()
+        self._worker.join(timeout=max(0.0, _remaining(deadline)))
+        return not self._worker.is_running()
 
     def completed_task_ids(self) -> tuple[str, ...]:
         return self._worker.completed_task_ids()

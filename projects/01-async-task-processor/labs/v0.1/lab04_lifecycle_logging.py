@@ -72,7 +72,7 @@ def main() -> int:
 
     task_queue = Queue()
     producer = Producer(task_queue)
-    worker = Worker(task_queue, delay=DELAY)
+    worker = Worker(task_queue, delay=DELAY, lock=producer.lock)
     worker.start()
     try:
         submitted_ids = [

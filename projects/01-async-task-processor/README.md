@@ -1,35 +1,36 @@
 # 01 — Async Task Processing System
 
-**Status:** not started. This file describes the planned system. There is no application code in this directory yet.
+**Status:** IN PROGRESS. The v0.1 application, labs, and unittest suite are in this directory. No milestone pull request has been reviewed or merged into `master`.
 
 ## Problem
 
-Some work should not run inside the caller's request. The caller submits a task and continues. A worker performs the task later. The first version keeps that hand-off small enough to run in one process so the queue, the worker, and failure behavior are visible before a broker is introduced.
+Some work should not run inside the caller's request. The caller submits a task and continues. A worker performs the task later. This version keeps that hand-off inside one process so the queue, the worker, and shutdown behavior are visible before a broker is introduced.
 
-## Initial architecture (planned)
+## v0.1 architecture
 
 ```text
-Producer → In-memory Queue → Worker
+Producer → queue.Queue → one worker thread
+                |
+                +-- shutdown: ACCEPTING → STOPPING → STOPPED
 ```
 
-- **Producer** accepts a task and places it on the queue.
-- **In-memory queue** holds tasks that are waiting. It lives in the process. It is empty after a restart.
-- **Worker** takes a task and runs it.
+- **Producer** accepts a payload, assigns a `uuid.uuid4()` id, and places a frozen `Task` on the queue.
+- **In-memory queue** holds accepted tasks until the worker retrieves them. It lives in the process and is empty after a restart.
+- **Worker** is one background thread. It sleeps for a configured delay and logs `SUBMITTED`, `STARTED`, and `COMPLETED`.
+- **Shutdown** shares one lock with submission. After the state changes to `STOPPING`, new submissions are rejected. Tasks already accepted are finished, then a sentinel stops the worker and the state becomes `STOPPED`.
 
-That shape is the v0.1 target. Retries, disk, RabbitMQ, and metrics are later milestones.
+Retries, disk, RabbitMQ, and metrics are later milestones.
 
 ## Planned milestones
 
-These capabilities are not implemented.
-
-| Version | Planned capability |
-| --- | --- |
-| v0.1 | Single producer and one worker using an in-memory queue. |
-| v0.2 | More than one worker consuming the same queue. |
-| v0.3 | Failure handling and retries, including a visible dead or exhausted task. |
-| v0.4 | Persistent task storage so queued work survives a process restart. |
-| v0.5 | RabbitMQ integration in place of the in-memory queue. |
-| v0.6 | Observability: enough signals to see queue depth, successes, failures, and delay. |
+| Version | Planned capability | This working tree |
+| --- | --- | --- |
+| v0.1 | Single producer and one worker using an in-memory queue. | Implemented locally. Not merged. |
+| v0.2 | More than one worker consuming the same queue. | Not implemented. |
+| v0.3 | Failure handling and retries, including a visible dead or exhausted task. | Not implemented. |
+| v0.4 | Persistent task storage so queued work survives a process restart. | Not implemented. |
+| v0.5 | RabbitMQ integration in place of the in-memory queue. | Not implemented. |
+| v0.6 | Observability: enough signals to see queue depth, successes, failures, and delay. | Not implemented. |
 
 Each version is a separate pull request into `master`. A version is implementation-complete only after that PR is reviewed, tested, and merged. See the rules in `PROGRESS.md`.
 
@@ -42,11 +43,23 @@ A small restaurant is the same hand-off:
 | Customer submits an order | Caller submits a task to the producer |
 | Waiter records it | Producer accepts the task and places it on the queue |
 | Order board holds pending orders | In-memory queue holds tasks not yet taken |
-| Chef processes orders | Worker runs the task |
+| Chef processes orders | One worker runs the task |
+| Manager turns the sign to closing | Shutdown rejects new orders and lets accepted ones finish |
 | Manager observes failures and delays | Operator uses the signals planned for v0.6 |
 
-The order board is not a kitchen diary. If the board is wiped, pending orders are gone. That is the in-memory queue. Durability (v0.4) and a real board in another room (v0.5, RabbitMQ) are later choices, made after the basic service works.
+The order board is not a kitchen diary. If the board is wiped, pending orders are gone. That is the in-memory queue. Durability (v0.4) and a real board in another room (v0.5, RabbitMQ) are later choices.
 
-## Out of scope for now
+## Check the local v0.1 code
 
-No producer, worker, queue, tests, dependencies, Docker, or broker configuration until a milestone PR is opened for that work.
+From the repository root:
+
+```bash
+python3 projects/01-async-task-processor/labs/v0.1/lab06_automated_tests.py
+python3 -m unittest discover -s projects/01-async-task-processor/tests -v
+```
+
+Labs 01 through 05 exercise the task model, queue, worker, logs, and shutdown one step at a time. See `LEARNING.md`.
+
+## Out of scope for v0.1
+
+No second worker, retries, disk, RabbitMQ, metrics, Docker, or extra dependencies. The application uses the Python standard library only.

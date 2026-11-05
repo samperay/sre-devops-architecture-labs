@@ -388,3 +388,138 @@ sudo tail -n 100 /var/log/nginx/error.log
 **Next recommended operational assessment:** Safely stage a replacement certificate/key, verify key match and SAN, validate `nginx -t`, gracefully reload, compare live and disk identities, test trusted HTTPS, and document rollback. This is **planned**, not recorded as completed. Do not overwrite current working key/certificate without backups and approval.
 
 **Suggested PR:** `docs(project02): document lesson 06 TLS HTTPS security and operations`.
+
+⸻
+
+Deferred Learning — Production TLS Operations
+
+Status: NOT STARTED
+Planned learning phase: After Kubernetes
+Project: 02 — Nginx and API Gateway
+Prerequisite: Lesson 06 TLS/HTTPS fundamentals completed.
+
+Purpose
+
+The initial TLS/HTTPS learning phase established certificate generation, TLS termination, certificate verification, protocol negotiation, and basic expiration monitoring.
+
+The remaining activities focus on operating certificates reliably in production.
+
+These exercises are deferred to maintain learning momentum toward Kubernetes.
+
+They must not be treated as completed.
+
+Milestone 07 — Certificate Renewal, Deployment, and Rollback
+
+Objective
+
+Learn how to replace TLS certificates safely without causing unnecessary application downtime.
+
+Planned Exercises
+
+1. Inspect the currently deployed certificate.
+2. Generate or obtain a replacement certificate.
+3. Validate certificate expiration and SAN.
+4. Verify certificate/private-key compatibility.
+5. Create a secure backup of existing certificate material.
+6. Stage replacement certificate files.
+7. Validate the Nginx configuration using nginx -t.
+8. Reload Nginx gracefully.
+9. Inspect the certificate served by the live HTTPS endpoint.
+10. Compare live and on-disk certificate identities.
+11. Validate HTTPS application connectivity.
+12. Simulate a failed certificate deployment.
+13. Roll back to the previous certificate.
+14. Verify service recovery.
+
+Expected Learning Outcomes
+
+* Understand certificate renewal versus certificate deployment.
+* Explain how Nginx loads certificate material.
+* Perform safe certificate replacement.
+* Verify that clients receive the intended certificate.
+* Restore service after a failed certificate deployment.
+* Document operational risks and recovery procedures.
+
+Completion Criteria
+
+* Replacement certificate deployed successfully.
+* Live certificate verified.
+* HTTPS connectivity validated.
+* Rollback demonstrated.
+* Recovery evidence recorded.
+
+Current status: NOT STARTED
+
+⸻
+
+Milestone 08 — Production-Grade Certificate Monitoring
+
+Objective
+
+Design and implement reliable certificate monitoring that detects expiration, validation failures, and monitoring errors.
+
+Planned Exercises
+
+1. Inspect certificates presented by live HTTPS endpoints.
+2. Extract certificate expiration dates.
+3. Calculate remaining certificate validity.
+4. Implement warning and critical thresholds.
+5. Validate certificate hostname and trust.
+6. Detect missing or malformed certificates.
+7. Distinguish certificate expiration from monitoring failures.
+8. Implement appropriate monitoring exit codes.
+9. Handle network and TLS connection failures.
+10. Design alerting and notification policies.
+11. Create troubleshooting and escalation procedures.
+12. Evaluate automated certificate monitoring in Kubernetes.
+
+Expected Learning Outcomes
+
+* Distinguish certificate health from application availability.
+* Monitor live certificates rather than relying exclusively on local files.
+* Avoid misleading monitoring alerts.
+* Handle certificate validation failures.
+* Design actionable alerting.
+* Understand operational monitoring trade-offs.
+
+Completion Criteria
+
+* Live endpoint monitoring implemented.
+* Expiration thresholds tested.
+* Missing and malformed certificate scenarios tested.
+* Monitoring errors classified correctly.
+* Alerting behavior documented.
+* Operational runbook completed.
+
+Current status: NOT STARTED
+
+⸻
+
+Kubernetes Integration
+
+After learning Kubernetes, revisit TLS operations in the context of:
+
+* Kubernetes TLS Secrets.
+* Ingress and Gateway API.
+* Certificate rotation.
+* cert-manager.
+* Automated certificate renewal.
+* Certificate monitoring.
+* Security boundaries between clients, ingress controllers, and application workloads.
+
+Compare certificate management in standalone Nginx with Kubernetes-based certificate management.
+
+Learning Checkpoint
+
+Topic	Status
+TLS/HTTPS fundamentals	APPLIED
+Certificate generation	LAB COMPLETED
+TLS protocol validation	LAB COMPLETED
+Certificate trust verification	LAB COMPLETED
+Basic expiration monitoring	LAB COMPLETED
+Certificate renewal	NOT STARTED
+Certificate rollback	NOT STARTED
+Live post-renewal verification	NOT STARTED
+Production-grade monitoring	NOT STARTED
+
+Next activity: Return to Milestone 07 after completing the planned Kubernetes learning phase.
